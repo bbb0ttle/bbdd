@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0a0a0a;
+  --color-surface: #111111;
+  --color-elevated: #171717;
+  --color-hairline: #262626;
+  --color-hairline-strong: #333333;
+  --color-fg: #ededed;
+  --color-fg-2: #a1a1a1;
+  --color-fg-3: #666666;
+  --color-accent: #0070f3;
+  --color-accent-soft: rgba(0, 112, 243, 0.14);
+  --color-ok: #45c76f;
+  --color-ok-soft: rgba(69, 199, 111, 0.14);
+  --color-warn: #f5a623;
+  --color-warn-soft: rgba(245, 166, 35, 0.14);
+  --color-err: #e5484d;
+  --color-err-soft: rgba(229, 72, 77, 0.14);
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    "SF Pro Text",
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes rowIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.row-in {
+  animation: rowIn 0.25s ease-out;
+}
