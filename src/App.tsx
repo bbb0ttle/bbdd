@@ -1,260 +1,143 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  checkAuth,
-  del,
-  pause,
-  resume,
-  syncMainData,
-  type ServerState,
-  type Torrent,
-} from "./api";
-import { fmtBytes, fmtSpeed } from "./format";
-import { Login } from "./components/Login";
-import { TorrentRow } from "./components/TorrentRow";
-import { AddDialog } from "./components/AddDialog";
-import { Sidebar, matchFilter, type Filter } from "./components/Sidebar";
-import { DetailPanel } from "./components/DetailPanel";
-import { SettingsDialog } from "./components/SettingsDialog";
+import { useCallback, useEffect, useState } from "react";
+import { UploadIcon } from "lucide-react";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
+import { Spinner } from "@/components/ui/spinner";
+import { Login } from "@/components/layout/login";
+import { AppSidebar } from "@/components/layout/app-sidebar";
+import { StatusBar } from "@/components/layout/status-bar";
+import { DialogHost } from "@/components/dialogs/dialog-host";
+import { TransfersView } from "@/views/transfers";
+import { SearchView } from "@/views/search";
+import { RssView } from "@/views/rss";
+import { LogView } from "@/views/log";
+import * as api from "@/api";
+import { StoreProvider, useStore } from "@/store";
+import { UIProvider, useUI } from "@/ui-state";
+import { cn } from "@/lib/utils";
+
+type Auth = "checking" | "in" | "out";
 
 export default function App() {
-  const [authed, setAuthed] = useState<boolean | null>(null);
-  const [torrents, setTorrents] = useState<Map<string, Torrent>>(new Map());
-  const [server, setServer] = useState<Partial<ServerState>>({});
-  const [categories, setCategories] = useState<string[]>([]);
-  const [tagList, setTagList] = useState<string[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>({ kind: "all" });
-  const [addOpen, setAddOpen] = useState(false);
-  const [setOpen, setSetOpen] = useState(false);
-  const [detail, setDetail] = useState<string | null>(null);
-  const [connErr, setConnErr] = useState(false);
-  const rid = useRef(0);
+  const [auth, setAuth] = useState<Auth>("checking");
 
   useEffect(() => {
-    checkAuth()
-      .then(setAuthed)
-      .catch(() => setAuthed(false));
+    api
+      .checkAuth()
+      .then((ok) => setAuth(ok ? "in" : "out"))
+      .catch(() => setAuth("out"));
+    const onUnauth = () => setAuth("out");
+    window.addEventListener("qbt:unauthorized", onUnauth);
+    return () => window.removeEventListener("qbt:unauthorized", onUnauth);
   }, []);
 
-  const poll = useCallback(async () => {
-    try {
-      const d = await syncMainData(rid.current);
-      if (d.rid !== undefined) rid.current = d.rid;
-      if (d.full_update) setTorrents(new Map());
-      if (d.torrents) {
-        setTorrents((prev) => {
-          const next = new Map(prev);
-          for (const [h, patch] of Object.entries(d.torrents!)) {
-            const old = next.get(h);
-            next.set(h, { ...(old ?? ({ hash: h } as Torrent)), ...(patch as Torrent) });
-          }
-          return next;
-        });
-      }
-      if (d.torrents_removed?.length) {
-        setTorrents((prev) => {
-          const next = new Map(prev);
-          for (const h of d.torrents_removed!) next.delete(h);
-          return next;
-        });
-        setSelected((prev) => {
-          const next = new Set(prev);
-          for (const h of d.torrents_removed!) next.delete(h);
-          return next;
-        });
-        setDetail((cur) => (cur && d.torrents_removed!.includes(cur) ? null : cur));
-      }
-      if (d.server_state) setServer((p) => ({ ...p, ...d.server_state }));
-      if (d.categories) {
-        setCategories(Object.keys(d.categories));
-        if (d.categories_removed) {
-          setCategories((prev) => prev.filter((c) => !d.categories_removed!.includes(c)));
-        }
-      }
-      if (d.tags) setTagList(d.tags);
-      if (d.tags_removed?.length) {
-        setTagList((prev) => prev.filter((t) => !d.tags_removed!.includes(t)));
-      }
-      setConnErr(false);
-    } catch {
-      setConnErr(true);
-    }
+  const logout = useCallback(async () => {
+    await api.logout().catch(() => {});
+    setAuth("out");
   }, []);
-
-  useEffect(() => {
-    if (!authed) return;
-    poll();
-    const t = setInterval(poll, 2000);
-    return () => clearInterval(t);
-  }, [authed, poll]);
-
-  const list = useMemo(() => {
-    const arr = [...torrents.values()].filter((t) => matchFilter(t, filter));
-    const q = query.trim().toLowerCase();
-    const filtered = q ? arr.filter((t) => t.name.toLowerCase().includes(q)) : arr;
-    return filtered.sort(
-      (a, b) =>
-        (b.dlspeed > 0 ? 1 : 0) - (a.dlspeed > 0 ? 1 : 0) || (b.added_on ?? 0) - (a.added_on ?? 0),
-    );
-  }, [torrents, query, filter]);
-
-  function toggle(h: string, shift: boolean) {
-    setSelected((prev) => {
-      const next = new Set(shift ? prev : []);
-      if (prev.has(h) && shift) next.delete(h);
-      else if (next.has(h)) next.delete(h);
-      else next.add(h);
-      return next;
-    });
-  }
-
-  const sel = [...selected];
-  const allChecked = sel.length > 0 && sel.length === list.length;
-  const detailTorrent = detail ? torrents.get(detail) : undefined;
-
-  if (authed === null) return <div className="min-h-screen" />;
-  if (!authed) return <Login onOk={() => setAuthed(true)} />;
 
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-40 border-b border-hairline bg-bg/80 backdrop-blur-md">
-        <div className="mx-auto flex h-12 max-w-[1200px] items-center gap-4 px-4">
-          <div className="text-[14px] font-semibold tracking-tight">Downloads</div>
-          <div className="ml-auto flex items-center gap-4 text-[12px] text-fg-2">
-            <span className="tnum hidden sm:inline">
-              ↓ {fmtSpeed(server.dl_info_speed ?? 0)}&nbsp;&nbsp;↑ {fmtSpeed(server.up_info_speed ?? 0)}
-            </span>
-            <span className="tnum hidden md:inline">剩余 {fmtBytes(server.free_space_on_disk ?? 0)}</span>
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${connErr ? "bg-err" : "bg-ok"}`}
-              title={connErr ? "连接中断" : "已连接"}
-            />
-            <button
-              onClick={() => setSetOpen(true)}
-              title="设置"
-              className="rounded-lg border border-hairline px-2.5 py-1.5 text-[12px] text-fg-2 transition-colors hover:bg-white/[0.06]"
-            >
-              ⚙
-            </button>
-            <button
-              onClick={() => setAddOpen(true)}
-              className="rounded-lg bg-fg px-3 py-1.5 text-[12px] font-medium text-bg transition-all hover:opacity-90 active:scale-[0.97]"
-            >
-              添加任务
-            </button>
-          </div>
+    <TooltipProvider delayDuration={400}>
+      {auth === "checking" ? (
+        <div className="flex min-h-svh items-center justify-center">
+          <Spinner className="size-5 text-muted-foreground" />
         </div>
-      </header>
-
-      <div className="mx-auto flex max-w-[1200px] gap-5 px-4 pt-5">
-        <Sidebar
-          torrents={torrents}
-          categories={categories}
-          tags={tagList}
-          filter={filter}
-          onFilter={setFilter}
-        />
-
-        <div className="min-w-0 flex-1">
-          <div className="mb-3 flex items-center gap-3">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索任务…"
-              className="w-56 rounded-lg border border-hairline bg-surface px-3 py-1.5 text-[12px] outline-none transition-colors placeholder:text-fg-3 focus:border-hairline-strong focus:ring-2 focus:ring-accent-soft"
-            />
-            <span className="text-[12px] text-fg-3">
-              {list.length} 个任务{selected.size > 0 && `，已选 ${selected.size}`}
-            </span>
-            {sel.length > 0 && (
-              <div className="ml-auto flex items-center gap-1.5">
-                <BulkBtn onClick={() => resume(sel)}>继续</BulkBtn>
-                <BulkBtn onClick={() => pause(sel)}>暂停</BulkBtn>
-                <BulkBtn danger onClick={() => { del(sel, false); setSelected(new Set()); }}>
-                  移除
-                </BulkBtn>
-                <BulkBtn
-                  danger
-                  onClick={() => {
-                    if (confirm(`删除 ${sel.length} 个任务及其文件？`)) {
-                      del(sel, true);
-                      setSelected(new Set());
-                    }
-                  }}
-                >
-                  删文件
-                </BulkBtn>
-              </div>
-            )}
-          </div>
-
-          <div className="overflow-hidden rounded-xl border border-hairline bg-surface">
-            <div
-              className="flex cursor-pointer items-center gap-4 border-b border-hairline px-4 py-2 text-[11px] uppercase tracking-wider text-fg-3 hover:bg-white/[0.02]"
-              onClick={() => setSelected(allChecked ? new Set() : new Set(list.map((t) => t.hash)))}
-            >
-              <div
-                className={`h-3.5 w-3.5 rounded border transition-colors ${
-                  allChecked ? "border-accent bg-accent" : "border-hairline-strong"
-                }`}
-              />
-              <span className="flex-1">名称</span>
-              <span className="hidden w-[300px] text-right md:block">状态</span>
-            </div>
-            {list.length === 0 ? (
-              <div className="flex h-40 items-center justify-center text-[13px] text-fg-3">
-                {query ? "无匹配任务" : "暂无下载任务"}
-              </div>
-            ) : (
-              list.map((t) => (
-                <TorrentRow
-                  key={t.hash}
-                  t={t}
-                  selected={selected.has(t.hash)}
-                  onToggle={toggle}
-                  onOpen={(h) => setDetail((cur) => (cur === h ? null : h))}
-                />
-              ))
-            )}
-          </div>
-
-          {detailTorrent && (
-            <DetailPanel t={detailTorrent} onClose={() => setDetail(null)} />
-          )}
-
-          <div className="py-6 text-center text-[11px] text-fg-3">
-            qBittorrent · {fmtBytes(server.dl_info_data ?? 0)} ↓ /{" "}
-            {fmtBytes(server.up_info_data ?? 0)} ↑ 本会话
-          </div>
-        </div>
-      </div>
-
-      <AddDialog open={addOpen} categories={categories} onClose={() => setAddOpen(false)} />
-      <SettingsDialog open={setOpen} onClose={() => setSetOpen(false)} />
-    </div>
+      ) : auth === "out" ? (
+        <Login onOk={() => setAuth("in")} />
+      ) : (
+        <StoreProvider>
+          <UIProvider>
+            <Shell onLogout={logout} />
+          </UIProvider>
+        </StoreProvider>
+      )}
+      <Toaster position="bottom-right" />
+    </TooltipProvider>
   );
 }
 
-function BulkBtn({
-  children,
-  onClick,
-  danger,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  danger?: boolean;
-}) {
+function Shell({ onLogout }: { onLogout: () => void }) {
+  const { view, openDialog, dialog } = useUI();
+  const { server, torrents } = useStore();
+  const [version, setVersion] = useState("");
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    api.appVersion().then(setVersion).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const dl = server.dl_info_speed ?? 0;
+    const up = server.up_info_speed ?? 0;
+    const f = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)}M` : `${Math.round(n / 1024)}K`);
+    document.title = dl || up ? `↓${f(dl)} ↑${f(up)} · qBittorrent` : `qBittorrent (${torrents.size})`;
+  }, [server.dl_info_speed, server.up_info_speed, torrents.size]);
+
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e) || dialog) return;
+      depth++;
+      setDragging(true);
+    };
+    const leave = () => {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const over = (e: DragEvent) => hasFiles(e) && !dialog && e.preventDefault();
+    const drop = (e: DragEvent) => {
+      depth = 0;
+      setDragging(false);
+      if (!hasFiles(e) || dialog) return;
+      e.preventDefault();
+      const files = [...(e.dataTransfer?.files ?? [])].filter((f) => f.name.endsWith(".torrent"));
+      if (files.length) openDialog({ type: "add", files });
+    };
+    const paste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (dialog || target.closest("input, textarea")) return;
+      const text = e.clipboardData?.getData("text") ?? "";
+      if (/^(magnet:\?|https?:\/\/|[0-9a-f]{40}$)/i.test(text.trim())) openDialog({ type: "add", urls: text.trim() });
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    window.addEventListener("paste", paste);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+      window.removeEventListener("paste", paste);
+    };
+  }, [dialog, openDialog]);
+
   return (
-    <button
-      onClick={onClick}
-      className={`rounded-lg border px-2.5 py-1 text-[12px] transition-colors ${
-        danger
-          ? "border-err/40 text-err hover:bg-err-soft"
-          : "border-hairline text-fg-2 hover:bg-white/[0.06]"
-      }`}
-    >
-      {children}
-    </button>
+    <SidebarProvider className="h-svh overflow-hidden">
+      <AppSidebar onLogout={onLogout} version={version} />
+      <SidebarInset className="min-w-0 overflow-hidden">
+        {view === "transfers" && <TransfersView />}
+        {view === "search" && <SearchView />}
+        {view === "rss" && <RssView />}
+        {view === "log" && <LogView />}
+        <StatusBar />
+      </SidebarInset>
+      <DialogHost />
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm transition-opacity duration-150",
+          dragging ? "opacity-100" : "opacity-0",
+        )}
+      >
+        <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-foreground/30 px-16 py-12 text-sm">
+          <UploadIcon className="size-8" />
+          松开以添加 .torrent 文件
+        </div>
+      </div>
+    </SidebarProvider>
   );
 }
