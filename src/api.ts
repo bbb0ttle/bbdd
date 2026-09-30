@@ -301,6 +301,7 @@ export const createTags = (tags: string[]) => post("/torrents/createTags", { tag
 export const deleteTags = (tags: string[]) => post("/torrents/deleteTags", { tags: tags.join(",") });
 
 export interface AddOptions {
+  downloader?: string;
   savepath?: string;
   downloadPath?: string;
   useDownloadPath?: boolean;

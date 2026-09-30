@@ -11,7 +11,7 @@ export interface Filters {
 }
 
 export type DialogState =
-  | { type: "add"; urls?: string; files?: File[] }
+  | { type: "add"; urls?: string; files?: File[]; downloader?: string }
   | { type: "delete"; hashes: string[] }
   | { type: "location"; hashes: string[] }
   | { type: "rename"; hash: string }

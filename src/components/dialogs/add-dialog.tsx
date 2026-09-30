@@ -26,7 +26,7 @@ function SwitchRow({ label, checked, onChange }: { label: string; checked: boole
   );
 }
 
-export function AddDialog({ initialUrls = "", initialFiles = [] }: { initialUrls?: string; initialFiles?: File[] }) {
+export function AddDialog({ initialUrls = "", initialFiles = [], downloader }: { initialUrls?: string; initialFiles?: File[]; downloader?: string }) {
   const { categories, tags: allTags, run } = useStore();
   const { closeDialog } = useUI();
   const [urls, setUrls] = useState(initialUrls);
@@ -81,6 +81,7 @@ export function AddDialog({ initialUrls = "", initialFiles = [] }: { initialUrls
     const ok = await run(
       () =>
         api.addTorrents(urls, files, {
+          downloader,
           autoTMM,
           savepath: autoTMM ? undefined : savepath || undefined,
           category: category === NONE ? undefined : category,
@@ -118,6 +119,9 @@ export function AddDialog({ initialUrls = "", initialFiles = [] }: { initialUrls
             value={urls}
             onChange={(e) => setUrls(e.target.value)}
           />
+          {downloader && (
+            <p className="-mt-3 text-xs text-muted-foreground">链接为索引页地址，将由 {downloader} 引擎解析为种子后添加。</p>
+          )}
           <div
             onDragOver={(e) => {
               e.preventDefault();
