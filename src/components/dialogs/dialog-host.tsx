@@ -18,7 +18,7 @@ export function DialogHost() {
   if (!d) return null;
   switch (d.type) {
     case "add":
-      return <AddDialog initialUrls={d.urls} initialFiles={d.files} />;
+      return <AddDialog initialUrls={d.urls} initialFiles={d.files} downloader={d.downloader} />;
     case "delete":
       return <DeleteDialog hashes={d.hashes} />;
     case "location":

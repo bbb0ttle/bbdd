@@ -22,6 +22,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { PageHeader } from "@/components/layout/page-header";
 import * as api from "@/api";
 import type { SearchPlugin, SearchResult } from "@/api";
+import { expandQuery } from "@/lib/expand";
 import { useStore } from "@/store";
 import { useUI } from "@/ui-state";
 import { fmtBytes } from "@/lib/format";
@@ -36,33 +37,40 @@ export function SearchView() {
   const [pattern, setPattern] = useState("");
   const [plugin, setPlugin] = useState("enabled");
   const [category, setCategory] = useState("all");
-  const [id, setId] = useState<number | null>(null);
+  const [ids, setIds] = useState<number[]>([]);
+  const [variants, setVariants] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "nbSeeders", desc: true });
   const [managing, setManaging] = useState(false);
-  const idRef = useRef<number | null>(null);
+  const idsRef = useRef<number[]>([]);
 
   const loadPlugins = () => api.searchPlugins().then(setPlugins).catch(() => {});
   useEffect(() => {
     loadPlugins();
     return () => {
-      if (idRef.current !== null) api.searchDelete(idRef.current).catch(() => {});
+      for (const i of idsRef.current) api.searchDelete(i).catch(() => {});
     };
   }, []);
 
   useEffect(() => {
-    if (id === null) return;
+    if (ids.length === 0) return;
     let alive = true;
     let timer: number | undefined;
     const tick = async () => {
       try {
-        const r = await api.searchResults(id, 0);
+        const rs = await Promise.all(ids.map((i) => api.searchResults(i, 0)));
         if (!alive) return;
-        setResults(r.results);
-        setRunning(r.status === "Running");
-        if (r.status === "Running") timer = window.setTimeout(tick, 1000);
+        const seen = new Map<string, SearchResult>();
+        for (const r of rs.flatMap((x) => x.results)) {
+          const prev = seen.get(r.fileUrl);
+          if (!prev || r.nbSeeders > prev.nbSeeders) seen.set(r.fileUrl, r);
+        }
+        setResults([...seen.values()]);
+        const go = rs.some((r) => r.status === "Running");
+        setRunning(go);
+        if (go) timer = window.setTimeout(tick, 1000);
       } catch {
         setRunning(false);
       }
@@ -72,7 +80,7 @@ export function SearchView() {
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [id]);
+  }, [ids]);
 
   const categories = useMemo(() => {
     const m = new Map<string, string>();
@@ -82,18 +90,30 @@ export function SearchView() {
   }, [plugins, plugin]);
 
   const start = async () => {
-    if (!pattern.trim()) return;
-    if (idRef.current !== null) await api.searchDelete(idRef.current).catch(() => {});
+    const q = pattern.trim();
+    if (!q) return;
+    for (const i of idsRef.current) await api.searchDelete(i).catch(() => {});
     try {
-      const r = await api.searchStart(pattern.trim(), plugin, category);
-      idRef.current = r.id;
+      const vs = await expandQuery(q);
+      const jobs = await Promise.all(vs.map((v) => api.searchStart(v, plugin, category)));
+      const next = jobs.map((j) => j.id);
+      idsRef.current = next;
+      setVariants(vs);
       setResults([]);
       setRunning(true);
-      setId(r.id);
+      setIds(next);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "搜索启动失败");
     }
   };
+
+  const stopAll = async () => {
+    await Promise.all(ids.map((i) => api.searchStop(i))).catch(() => {});
+    setRunning(false);
+  };
+
+  const needsDownloader = (r: SearchResult) =>
+    /^https?:/i.test(r.fileUrl) && !/\.torrent(\?|#|$)/i.test(r.fileUrl) ? r.engineName : undefined;
 
   const shown = useMemo(() => {
     const f = filter.toLowerCase();
@@ -173,7 +193,7 @@ export function SearchView() {
           </SelectContent>
         </Select>
         {running ? (
-          <Button type="button" variant="outline" className="h-9 gap-2" onClick={() => id !== null && api.searchStop(id).then(() => setRunning(false))}>
+          <Button type="button" variant="outline" className="h-9 gap-2" onClick={stopAll}>
             <SquareIcon className="size-4" /> 停止
           </Button>
         ) : (
@@ -188,6 +208,7 @@ export function SearchView() {
           <span className="tnum">
             {shown.length} / {results.length} 条结果
           </span>
+          {variants.length > 1 && <span className="truncate">扩展：{variants.join(" · ")}</span>}
           <Input className="ml-auto h-8 w-56 text-xs" placeholder="在结果中筛选" value={filter} onChange={(e) => setFilter(e.target.value)} />
         </div>
       )}
@@ -225,7 +246,12 @@ export function SearchView() {
                 <span className="text-right text-info tnum">{r.nbLeechers}</span>
                 <span className="truncate text-xs text-muted-foreground">{r.engineName || r.siteUrl.replace(/^https?:\/\//, "")}</span>
                 <div className="flex justify-end gap-0.5">
-                  <Button variant="ghost" size="icon-sm" aria-label="下载" onClick={() => openDialog({ type: "add", urls: r.fileUrl })}>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="下载"
+                    onClick={() => openDialog({ type: "add", urls: r.fileUrl, downloader: needsDownloader(r) })}
+                  >
                     <DownloadIcon className="size-4" />
                   </Button>
                   {r.descrLink && (
